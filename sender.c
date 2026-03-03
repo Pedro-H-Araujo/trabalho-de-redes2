@@ -6,10 +6,10 @@ static uint64_t total_retransmit = 0;
 static uint64_t total_acks       = 0;
 
 typedef struct {
-    uint8_t        pkt[4096];
+    uint8_t        pkt[MAX_DATA_SIZE + 512]; /* IP + UDP + ProtoHeader + data */
     int            pkt_len;
-    uint32_t       seq;
-    uint32_t       seq_end;
+    uint64_t       seq;
+    uint64_t       seq_end;
     int            in_use;
     struct timeval sent_at;
 } WindowSlot;
@@ -48,10 +48,10 @@ static int build_raw_packet(uint8_t *buf,
 
 static uint32_t try_recv_acks(int sock_recv, uint32_t base_seq)
 {
-    uint8_t buf[4096];
+    uint8_t buf[MAX_DATA_SIZE + 512];
     struct sockaddr_in from;
     socklen_t from_len = sizeof(from);
-    uint32_t new_base = base_seq;
+    uint64_t new_base = base_seq;
 
     while (1) {
         ssize_t r = recvfrom(sock_recv, buf, sizeof(buf), MSG_DONTWAIT,
@@ -75,9 +75,9 @@ static uint32_t try_recv_acks(int sock_recv, uint32_t base_seq)
         if (!(seg->hdr.flags & FLAG_ACK)) continue;
         if (!checksum_valid(seg))          continue;
 
-        uint32_t ack = ntohl(seg->hdr.ack_num);
+        uint64_t ack = ntohll(seg->hdr.ack_num);
         total_acks++;
-        fprintf(stderr, "[ACK] ack_num=%u\n", ack);
+        fprintf(stderr, "[ACK] ack_num=%llu\n", (unsigned long long)ack);
 
         if (ack > new_base)
             new_base = ack;
@@ -90,6 +90,12 @@ static void check_timeouts(int sock_send, struct sockaddr_in *dst)
     struct timeval now;
     gettimeofday(&now, NULL);
 
+    long timeout_us = TIMEOUT_SEC * 1000000L + TIMEOUT_USEC;
+
+    /* encontra o slot mais antigo que expirou */
+    int oldest = -1;
+    long oldest_elapsed = 0;
+
     for (int i = 0; i < WINDOW_SIZE; i++) {
         if (!window[i].in_use) continue;
 
@@ -97,15 +103,18 @@ static void check_timeouts(int sock_send, struct sockaddr_in *dst)
             (now.tv_sec  - window[i].sent_at.tv_sec)  * 1000000L +
             (now.tv_usec - window[i].sent_at.tv_usec);
 
-        long timeout_us = TIMEOUT_SEC * 1000000L + TIMEOUT_USEC;
-
-        if (elapsed_us >= timeout_us) {
-            sendto(sock_send, window[i].pkt, window[i].pkt_len, 0,
-                   (struct sockaddr *)dst, sizeof(*dst));
-            gettimeofday(&window[i].sent_at, NULL);
-            total_retransmit++;
-            fprintf(stderr, "[RETRANSMIT] seq=%u\n", window[i].seq);
+        if (elapsed_us >= timeout_us && elapsed_us > oldest_elapsed) {
+            oldest_elapsed = elapsed_us;
+            oldest = i;
         }
+    }
+
+    if (oldest >= 0) {
+        sendto(sock_send, window[oldest].pkt, window[oldest].pkt_len, 0,
+               (struct sockaddr *)dst, sizeof(*dst));
+        gettimeofday(&window[oldest].sent_at, NULL);
+        total_retransmit++;
+        fprintf(stderr, "[RETRANSMIT] seq=%llu\n", (unsigned long long)window[oldest].seq);
     }
 }
 
@@ -137,8 +146,8 @@ int main(int argc, char **argv)
 
     memset(window, 0, sizeof(window));
 
-    uint32_t base_seq = 0;
-    uint32_t next_seq = 0;
+    uint64_t base_seq = 0;
+    uint64_t next_seq = 0;
     int      eof      = 0;
 
     struct timeval start, end;
@@ -175,17 +184,17 @@ int main(int argc, char **argv)
 
             window[slot].pkt_len = pkt_len;
             window[slot].seq     = next_seq;
-            window[slot].seq_end = next_seq + (uint32_t)n;
+            window[slot].seq_end = next_seq + (uint64_t)n;
             window[slot].in_use  = 1;
             gettimeofday(&window[slot].sent_at, NULL);
 
             total_sent++;
-            fprintf(stderr, "[SEND] seq=%u len=%zu\n", next_seq, n);
-            next_seq += (uint32_t)n;
+            fprintf(stderr, "[SEND] seq=%llu len=%zu\n", (unsigned long long)next_seq, n);
+            next_seq += (uint64_t)n;
         }
 
         /* recebe ACKs */
-        uint32_t new_base = try_recv_acks(sock_recv, base_seq);
+        uint64_t new_base = try_recv_acks(sock_recv, base_seq);
         if (new_base > base_seq) {
             for (int i = 0; i < WINDOW_SIZE; i++)
                 if (window[i].in_use && window[i].seq_end <= new_base)
@@ -194,7 +203,7 @@ int main(int argc, char **argv)
         }
 
         check_timeouts(sock_send, &dst);
-        usleep(100);
+        usleep(10);
     }
 
     gettimeofday(&end, NULL);

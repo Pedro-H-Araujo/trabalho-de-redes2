@@ -89,7 +89,20 @@ extern int errno;
 #define ntohs(x)  htons(x)
 #define ntohl(x)  htonl(x)
 
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#  define htonll(x)  ((uint64_t)(x))
+#else
+#  define htonll(x)  ((uint64_t)(                                   \
+       ((uint64_t)htonl((uint32_t)((uint64_t)(x) & 0xFFFFFFFFULL)) << 32) | \
+       ((uint64_t)htonl((uint32_t)((uint64_t)(x) >> 32)))))
+#endif
+#define ntohll(x) htonll(x)
+
 /* syscalls */
+#define SIGINT 2
+typedef void (*sighandler_t)(int);
+sighandler_t signal(int signum, sighandler_t handler);
+void exit(int status);
 int     socket(int domain, int type, int protocol);
 int     setsockopt(int sockfd, int level, int optname,
                    const void *optval, socklen_t optlen);
@@ -114,10 +127,10 @@ int  rand(void);
 void srand(unsigned int seed);
 
 /* protocolo */
-#define MAX_DATA_SIZE   1400   /* payload máximo por segmento        */
-#define WINDOW_SIZE     16     /* tamanho da janela deslizante        */
-#define TIMEOUT_SEC     0      /* timeout de retransmissão (segundos) */
-#define TIMEOUT_USEC    200000 /* timeout de retransmissão (microsegundos) */
+#define MAX_DATA_SIZE   32768  /* loopback suporta ate ~65KB; rede real use 1448 */
+#define WINDOW_SIZE     64     /* mais slots em voo = maior throughput */
+#define TIMEOUT_SEC     0
+#define TIMEOUT_USEC    500000 /* 500ms — menos retransmissoes desnecessarias */
 #define MAX_SEQ         0xFFFFFFFF
 
 /* flags */
@@ -132,15 +145,15 @@ void srand(unsigned int seed);
 
 /* cabeçalho do protocolo */
 typedef struct __attribute__((packed)) {
-    uint16_t src_port;   /* porta de origem              */
-    uint16_t dst_port;   /* porta de destino             */
-    uint32_t seq_num;    /* número de sequência          */
-    uint32_t ack_num;    /* número de confirmação        */
-    uint8_t  flags;      /* ACK | SYN | FIN | DATA       */
-    uint8_t  window;     /* tamanho da janela            */
-    uint16_t checksum;   /* checksum de 16 bits          */
-    uint16_t data_len;   /* tamanho do payload           */
-    uint16_t padding;    /* alinhamento                  */
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint64_t seq_num;    /* 64 bits — suporta arquivos >4GB */
+    uint64_t ack_num;
+    uint8_t  flags;
+    uint8_t  window;
+    uint16_t checksum;
+    uint16_t data_len;
+    uint16_t padding;
 } ProtoHeader;
 
 
@@ -153,8 +166,8 @@ typedef struct __attribute__((packed)) {
 uint16_t compute_checksum(void *data, int len);
 int      checksum_valid(Segment *seg);
 void     build_segment(Segment *seg,
-                        uint32_t seq, uint32_t ack,
-                        uint8_t flags, uint8_t window,
-                        const uint8_t *payload, uint16_t payload_len);
+                    uint64_t seq, uint64_t ack,
+                    uint8_t flags, uint8_t window,
+                    const uint8_t *payload, uint16_t payload_len);
 
 #endif /* PROTOCOL_H */

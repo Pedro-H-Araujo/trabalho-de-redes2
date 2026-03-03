@@ -67,6 +67,26 @@ md5sum teste.bin saida.bin
 
 ---
 
+## Teste com arquivo grande
+
+Verifique o espaço disponível antes:
+```bash
+df -h .
+```
+
+Crie um arquivo esparso do tamanho que couber (não ocupa espaço real em disco):
+```bash
+truncate -s 20G testeGrande.bin   # ajuste o tamanho conforme espaço disponível
+```
+
+```bash
+rm -f saida.bin && sudo ./receiver 127.0.0.1 127.0.0.1 saida.bin 0 42 0.0
+sudo ./sender 127.0.0.1 127.0.0.1 testeGrande.bin
+md5sum testeGrande.bin saida.bin
+```
+
+---
+
 ## Parâmetros do receiver
 
 | Parâmetro | Descrição |

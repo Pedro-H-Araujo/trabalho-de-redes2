@@ -39,7 +39,7 @@ static int should_drop(void) {
 #define REORDER_BUF 2048
 
 typedef struct {
-    uint32_t seq;
+    uint64_t seq;
     uint16_t len;
     uint8_t  data[MAX_DATA_SIZE];
     int      valid;
@@ -47,13 +47,26 @@ typedef struct {
 
 static ReorderSlot reorder_buf[REORDER_BUF];
 
+static uint64_t total_received = 0;
+static uint64_t total_dropped  = 0;
+static uint64_t total_dup      = 0;
+
+static void sigint_handler(int sig) {
+    (void)sig;
+    printf("\n[RECEIVER] Estatisticas:\n");
+    printf("  Pacotes recebidos:   %llu\n", (unsigned long long)total_received);
+    printf("  Pacotes descartados: %llu\n", (unsigned long long)total_dropped);
+    printf("  Duplicatas:          %llu\n", (unsigned long long)total_dup);
+    exit(0);
+}
+
 /* envia ACK */
 static void send_ack(int sock_send,
                      const char *src_ip, const char *dst_ip,
                      struct sockaddr_in *dst,
-                     uint32_t ack_num)
+                     uint64_t ack_num)
 {
-    uint8_t pkt[4096];
+    uint8_t pkt[MAX_DATA_SIZE + 512];
     memset(pkt, 0, sizeof(pkt));
 
     struct iphdr  *iph  = (struct iphdr  *)pkt;
@@ -89,7 +102,7 @@ static void send_ack(int sock_send,
                (struct sockaddr *)dst, sizeof(*dst)) < 0)
         perror("sendto ACK");
     else
-        fprintf(stderr, "[ACK SENT] ack_num=%u\n", ack_num);
+        fprintf(stderr, "[ACK SENT] ack_num=%llu\n", (unsigned long long)ack_num);
 }
 
 int main(int argc, char **argv) {
@@ -138,19 +151,23 @@ int main(int argc, char **argv) {
     dst_addr.sin_addr.s_addr = inet_addr(dst_ip);
 
     memset(reorder_buf, 0, sizeof(reorder_buf));
+    signal(SIGINT, sigint_handler);
 
-    uint32_t expected_seq   = 0;   /* próximo byte esperado          */
-    uint64_t total_received = 0;
-    uint64_t total_dropped  = 0;
-    uint64_t total_dup      = 0;
-
-    uint8_t buf[4096];
+    uint64_t expected_seq = 0;
+    uint8_t buf[MAX_DATA_SIZE + 512];
 
     fprintf(stderr, "[RECEIVER] Aguardando pacotes...\n");
 
     while (1) {
         ssize_t r = recvfrom(sock_recv, buf, sizeof(buf), 0, NULL, NULL);
         if (r <= 0) continue;
+
+        /* módulo de perda: antes de qualquer processamento */
+        if (should_drop()) {
+            total_dropped++;
+            fprintf(stderr, "[DROP] pacote descartado (simulacao)\n");
+            continue;
+        }
 
         /* valida tamanho mínimo */
         if (r < (ssize_t)(sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(ProtoHeader)))
@@ -186,33 +203,26 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        /* ── MÓDULO DE PERDA: aplicado apenas em pacotes DATA válidos ── */
-        if (should_drop()) {
-            total_dropped++;
-            fprintf(stderr, "[DROP] pacote descartado (simulação)\n");
-            continue;
-        }
-
-        uint32_t seq      = ntohl(seg->hdr.seq_num);
+        uint64_t seq      = ntohll(seg->hdr.seq_num);
         uint16_t data_len = ntohs(seg->hdr.data_len);
 
         /* valida data_len */
         if (data_len == 0 || data_len > MAX_DATA_SIZE) continue;
         if (r < (ssize_t)(udp_offset + sizeof(ProtoHeader) + data_len)) continue;
 
-        fprintf(stderr, "[RECV] seq=%u len=%u expected=%u\n",
-                seq, data_len, expected_seq);
+        fprintf(stderr, "[RECV] seq=%llu len=%u expected=%llu\n",
+                (unsigned long long)seq, data_len, (unsigned long long)expected_seq);
 
         /* ── detecção de duplicata ── */
-        if (seq < expected_seq) {
+        if (seq < (uint64_t)expected_seq) {
             total_dup++;
-            fprintf(stderr, "[DUP] seq=%u já recebido, enviando ACK\n", seq);
+            fprintf(stderr, "[DUP] seq=%llu ja recebido, enviando ACK\n", (unsigned long long)seq);
             send_ack(sock_send, src_ip, dst_ip, &dst_addr, expected_seq);
             continue;
         }
 
         /* ── pacote em ordem ── */
-        if (seq == expected_seq) {
+        if (seq == (uint64_t)expected_seq) {
             fwrite(seg->data, 1, data_len, out);
             fflush(out);
             total_received++;
@@ -223,7 +233,7 @@ int main(int argc, char **argv) {
                 found = 0;
                 for (int i = 0; i < REORDER_BUF; i++) {
                     if (reorder_buf[i].valid &&
-                        reorder_buf[i].seq == expected_seq)
+                        reorder_buf[i].seq == (uint64_t)expected_seq)
                     {
                         fwrite(reorder_buf[i].data, 1,
                                reorder_buf[i].len, out);
@@ -255,7 +265,7 @@ int main(int argc, char **argv) {
                         reorder_buf[i].len   = data_len;
                         memcpy(reorder_buf[i].data, seg->data, data_len);
                         reorder_buf[i].valid = 1;
-                        fprintf(stderr, "[OOO] seq=%u guardado\n", seq);
+                        fprintf(stderr, "[OOO] seq=%llu guardado\n", (unsigned long long)seq);
                         break;
                     }
                 }

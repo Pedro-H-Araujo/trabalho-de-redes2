@@ -127,7 +127,7 @@ int checksum_valid(Segment *seg) {
 
 
 void build_segment(Segment *seg,
-                   uint32_t seq, uint32_t ack,
+                   uint64_t seq, uint64_t ack,
                    uint8_t flags, uint8_t window,
                    const uint8_t *payload, uint16_t payload_len)
 {
@@ -135,8 +135,8 @@ void build_segment(Segment *seg,
 
     seg->hdr.src_port  = htons(SRC_PORT);
     seg->hdr.dst_port  = htons(DST_PORT);
-    seg->hdr.seq_num   = htonl(seq);
-    seg->hdr.ack_num   = htonl(ack);
+    seg->hdr.seq_num   = htonll(seq);
+    seg->hdr.ack_num   = htonll(ack);
     seg->hdr.flags     = flags;
     seg->hdr.window    = window;
     seg->hdr.data_len  = htons(payload_len);
