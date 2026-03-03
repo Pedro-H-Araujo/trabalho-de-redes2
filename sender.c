@@ -1,12 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <netinet/ip.h>
-#include <netinet/udp.h>
-#include <sys/time.h>
-#include <errno.h>
 #include "protocol.h"
 
 static uint64_t total_sent       = 0;
@@ -209,13 +201,11 @@ int main(int argc, char **argv)
     double elapsed = (end.tv_sec - start.tv_sec) +
                      (end.tv_usec - start.tv_usec) / 1e6;
 
-    printf("\n═══════════════════════════════\n");
     printf("  Transmissão concluída!\n");
     printf("  Pacotes enviados:    %lu\n", total_sent);
     printf("  Retransmissões:      %lu\n", total_retransmit);
     printf("  ACKs recebidos:      %lu\n", total_acks);
     printf("  Tempo total:         %.2f s\n", elapsed);
-    printf("═══════════════════════════════\n");
 
     fclose(fp);
     close(sock_send);

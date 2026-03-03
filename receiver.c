@@ -1,16 +1,7 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <netinet/ip.h>
-#include <netinet/udp.h>
-#include <time.h>
 #include "protocol.h"
 
-/* ──────────────────────────────────────────
-   Módulo de injeção de perdas
-   ────────────────────────────────────────── */
+/* modelo de perda */
 typedef enum { LOSS_BERNOULLI, LOSS_BIMODAL } LossModel;
 
 typedef struct {
@@ -41,11 +32,10 @@ static int should_drop(void) {
             return 0; /* estado good: sem perda */
         }
     }
+    return 0;
 }
 
-/* ──────────────────────────────────────────
-   Buffer de reordenação (out-of-order)
-   ────────────────────────────────────────── */
+/* buffer de reordenação out-of-order */
 #define REORDER_BUF 2048
 
 typedef struct {
@@ -57,9 +47,7 @@ typedef struct {
 
 static ReorderSlot reorder_buf[REORDER_BUF];
 
-/* ──────────────────────────────────────────
-   Envia ACK cumulativo de volta ao emissor
-   ────────────────────────────────────────── */
+/* envia ACK */
 static void send_ack(int sock_send,
                      const char *src_ip, const char *dst_ip,
                      struct sockaddr_in *dst,
@@ -104,13 +92,6 @@ static void send_ack(int sock_send,
         fprintf(stderr, "[ACK SENT] ack_num=%u\n", ack_num);
 }
 
-/* ──────────────────────────────────────────
-   MAIN do Receptor
-   Uso: ./receiver <src_ip> <dst_ip> <saida> \
-                   <modelo(0=bern,1=bimod)>  \
-                   <semente>                  \
-                   <p_loss> [p_bad p_loss_bad]
-   ────────────────────────────────────────── */
 int main(int argc, char **argv) {
     if (argc < 7) {
         fprintf(stderr,
@@ -171,13 +152,6 @@ int main(int argc, char **argv) {
         ssize_t r = recvfrom(sock_recv, buf, sizeof(buf), 0, NULL, NULL);
         if (r <= 0) continue;
 
-        /* ── MÓDULO DE PERDA: decide antes de qualquer processamento ── */
-        if (should_drop()) {
-            total_dropped++;
-            fprintf(stderr, "[DROP] pacote descartado (simulação)\n");
-            continue;
-        }
-
         /* valida tamanho mínimo */
         if (r < (ssize_t)(sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(ProtoHeader)))
             continue;
@@ -209,6 +183,13 @@ int main(int argc, char **argv) {
         /* verifica checksum */
         if (!checksum_valid(seg)) {
             fprintf(stderr, "[ERROR] checksum inválido, descartando\n");
+            continue;
+        }
+
+        /* ── MÓDULO DE PERDA: aplicado apenas em pacotes DATA válidos ── */
+        if (should_drop()) {
+            total_dropped++;
+            fprintf(stderr, "[DROP] pacote descartado (simulação)\n");
             continue;
         }
 
@@ -267,7 +248,6 @@ int main(int argc, char **argv) {
                     break;
                 }
             }
-            int stored = already; /* considera "guardado" se já existe */
             if (!already) {
                 for (int i = 0; i < REORDER_BUF; i++) {
                     if (!reorder_buf[i].valid) {
@@ -275,7 +255,6 @@ int main(int argc, char **argv) {
                         reorder_buf[i].len   = data_len;
                         memcpy(reorder_buf[i].data, seg->data, data_len);
                         reorder_buf[i].valid = 1;
-                        stored = 1;
                         fprintf(stderr, "[OOO] seq=%u guardado\n", seq);
                         break;
                     }

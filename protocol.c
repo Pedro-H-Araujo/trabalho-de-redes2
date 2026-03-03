@@ -1,10 +1,98 @@
-#include <string.h>
+#include <stdio.h>
 #include "protocol.h"
 
-/* ──────────────────────────────────────────
-   Checksum de 16 bits (complemento de 1)
-   Mesmo algoritmo usado em IP/UDP/TCP.
-   ────────────────────────────────────────── */
+
+void *memset(void *s, int c, __SIZE_TYPE__ n) {
+    unsigned char *p = (unsigned char *)s;
+    while (n--) *p++ = (unsigned char)c;
+    return s;
+}
+
+void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n) {
+    unsigned char       *d = (unsigned char *)dst;
+    const unsigned char *s = (const unsigned char *)src;
+    while (n--) *d++ = *s++;
+    return dst;
+}
+
+
+uint32_t inet_addr(const char *cp) {
+    uint32_t result = 0;
+    int      shift  = 0;
+    int      octet  = 0;
+    int      dots   = 0;
+
+    for (int i = 0; cp[i] != '\0' && dots <= 3; i++) {
+        char c = cp[i];
+        if (c >= '0' && c <= '9') {
+            octet = octet * 10 + (c - '0');
+        } else if (c == '.') {
+            result |= (uint32_t)(octet & 0xFF) << shift;
+            shift += 8;
+            octet = 0;
+            dots++;
+        } else {
+            return 0xFFFFFFFF; /* inválido */
+        }
+    }
+    result |= (uint32_t)(octet & 0xFF) << shift;
+    return result;
+}
+
+
+int atoi(const char *s) {
+    int n    = 0;
+    int sign = 1;
+    while (*s == ' ') s++;
+    if (*s == '-') { sign = -1; s++; }
+    else if (*s == '+') s++;
+    while (*s >= '0' && *s <= '9')
+        n = n * 10 + (*s++ - '0');
+    return sign * n;
+}
+
+double atof(const char *s) {
+    double result = 0.0;
+    double frac   = 0.0;
+    double div    = 1.0;
+    int    sign   = 1;
+    int    in_frac = 0;
+
+    while (*s == ' ') s++;
+    if (*s == '-') { sign = -1; s++; }
+    else if (*s == '+') s++;
+
+    while (*s != '\0') {
+        if (*s >= '0' && *s <= '9') {
+            if (in_frac) {
+                div    *= 10.0;
+                frac   += (*s - '0') / div;
+            } else {
+                result  = result * 10.0 + (*s - '0');
+            }
+        } else if (*s == '.') {
+            in_frac = 1;
+        } else {
+            break;
+        }
+        s++;
+    }
+    return sign * (result + frac);
+}
+
+
+static unsigned long long _rand_state = 1;
+
+void srand(unsigned int seed) {
+    _rand_state = seed;
+}
+
+int rand(void) {
+    _rand_state = _rand_state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return (int)((_rand_state >> 33) & 0x7FFFFFFF);
+}
+
+/* checksum de 16 bits */
 uint16_t compute_checksum(void *data, int len) {
     uint16_t *ptr = (uint16_t *)data;
     uint32_t  sum = 0;
@@ -13,27 +101,19 @@ uint16_t compute_checksum(void *data, int len) {
         sum += *ptr++;
         len -= 2;
     }
-    /* byte sobrando (len ímpar) */
     if (len == 1)
         sum += *(uint8_t *)ptr;
-
-    /* dobra o carry */
     while (sum >> 16)
         sum = (sum & 0xFFFF) + (sum >> 16);
 
     return (uint16_t)(~sum);
 }
 
-/* Valida checksum de um segmento recebido.
-   Retorna 1 se OK, 0 se corrompido.         */
+
 int checksum_valid(Segment *seg) {
     uint16_t received = seg->hdr.checksum;
-    seg->hdr.checksum = 0;                   /* zera antes de recalcular */
-
-    /* CORRIGIDO: ntohs() para converter de network byte order */
+    seg->hdr.checksum = 0;
     int total = sizeof(ProtoHeader) + ntohs(seg->hdr.data_len);
-
-    /* sanidade: evita leitura fora dos limites */
     if (total < (int)sizeof(ProtoHeader) || total > (int)sizeof(Segment)) {
         seg->hdr.checksum = received;
         return 0;
@@ -41,11 +121,11 @@ int checksum_valid(Segment *seg) {
 
     uint16_t calc = compute_checksum(seg, total);
 
-    seg->hdr.checksum = received;            /* restaura */
+    seg->hdr.checksum = received;
     return (calc == received);
 }
 
-/* Monta um segmento completo pronto para envio. */
+
 void build_segment(Segment *seg,
                    uint32_t seq, uint32_t ack,
                    uint8_t flags, uint8_t window,
