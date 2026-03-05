@@ -46,9 +46,9 @@ static int build_raw_packet(uint8_t *buf,
     return ntohs(iph->tot_len);
 }
 
-static uint32_t try_recv_acks(int sock_recv, uint32_t base_seq)
+static uint64_t try_recv_acks(int sock_recv, uint64_t base_seq)
 {
-    uint8_t buf[MAX_DATA_SIZE + 512];
+    static uint8_t buf[MAX_DATA_SIZE + 512];
     struct sockaddr_in from;
     socklen_t from_len = sizeof(from);
     uint64_t new_base = base_seq;
@@ -150,6 +150,8 @@ int main(int argc, char **argv)
     uint64_t next_seq = 0;
     int      eof      = 0;
 
+    static uint8_t payload_buf[MAX_DATA_SIZE];
+
     struct timeval start, end;
     gettimeofday(&start, NULL);
 
@@ -162,7 +164,7 @@ int main(int argc, char **argv)
                 if (window[i].in_use) in_flight++;
             if (in_flight >= WINDOW_SIZE) break;
 
-            uint8_t payload[MAX_DATA_SIZE];
+            uint8_t *payload = payload_buf;
             size_t n = fread(payload, 1, MAX_DATA_SIZE, fp);
             if (n == 0) { eof = 1; break; }
 
