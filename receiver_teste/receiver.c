@@ -36,7 +36,7 @@ static int should_drop(void) {
 }
 
 /* buffer de reordenação out-of-order */
-#define REORDER_BUF 2048
+#define REORDER_BUF 256
 
 typedef struct {
     uint64_t seq;

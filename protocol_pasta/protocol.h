@@ -127,7 +127,7 @@ int  rand(void);
 void srand(unsigned int seed);
 
 /* protocolo */
-#define MAX_DATA_SIZE   32768  /* loopback suporta ate ~65KB; rede real use 1448 */
+#define MAX_DATA_SIZE   1448   /* MTU Ethernet 1500 - 20 IP - 8 UDP - 24 ProtoHeader */
 #define WINDOW_SIZE     64     /* mais slots em voo = maior throughput */
 #define TIMEOUT_SEC     0
 #define TIMEOUT_USEC    500000 /* 500ms — menos retransmissoes desnecessarias */
